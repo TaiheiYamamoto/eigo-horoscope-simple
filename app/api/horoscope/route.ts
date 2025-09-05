@@ -25,10 +25,22 @@ export async function POST(req: Request) {
   try {
     const { name, birthISO, topic } = await req.json();
     const sign = zodiacFromISO(birthISO);
+
     const sys = "You are an ESL-friendly horoscope guide. CEFR A2-B1. Short and clear.";
-    const user = `Create a concise horoscope (6-8 sentences) for Sign: ${sign}. 
-User name: ${name}. Topic: ${topic}.
-Return JSON: {"title":string,"english":string,"japanese":string}`;
+    const user =
+`Create a concise horoscope for:
+- Sign: ${sign}
+- User name: ${name}
+- Topic: ${topic}
+
+Return strict JSON ONLY with these keys:
+{
+  "title": string,
+  "english": string,              // 6-8 sentences, simple English
+  "japanese": string,             // natural JP translation
+  "luckyColor": string,           // a common color name in English, e.g. "blue", "emerald"
+  "luckyNumber": number           // integer 1-99
+}`;
 
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -38,7 +50,12 @@ Return JSON: {"title":string,"english":string,"japanese":string}`;
 
     const raw = r.choices[0]?.message?.content ?? "{}";
     const json = JSON.parse(raw.replace(/```json|```/g, "").trim());
-    return NextResponse.json({ ...json, sign });
+
+    // 念のためバリデーション＆フォールバック
+    const luckyNumber = Number.isFinite(json.luckyNumber) ? Math.max(1, Math.min(99, Math.round(json.luckyNumber))) : (Math.floor(Math.random()*99)+1);
+    const luckyColor = (json.luckyColor || "blue") as string;
+
+    return NextResponse.json({ ...json, luckyColor, luckyNumber, sign });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "horoscope failed" }, { status: 500 });
   }
