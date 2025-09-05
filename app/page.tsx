@@ -8,6 +8,12 @@ type Msg = {
   ja?: string;      // 和訳（任意）
 };
 
+type Learn = {
+  points?: string[];
+  usefulPhrases?: { en: string; ja: string }[];
+  practicePrompts?: string[];
+};
+
 function splitEnJa(raw: string): { en: string; ja?: string } {
   const lines = raw.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length <= 1) return { en: raw, ja: undefined };
@@ -29,9 +35,10 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // --- 最新の占い結果のLucky情報（バッジ表示用） ---
+  // --- Lucky情報 & 学習カード ---
   const [luckyColor, setLuckyColor] = useState<string | null>(null);
   const [luckyNumber, setLuckyNumber] = useState<number | null>(null);
+  const [learn, setLearn] = useState<Learn | null>(null);
 
   // --- TTS / スクロール ---
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -62,9 +69,7 @@ export default function Page() {
         audioRef.current.src = url;
         audioRef.current.play().catch(() => {});
       }
-    } catch {
-      // 再生失敗は無視（自動再生ブロックなど）
-    }
+    } catch { /* 自動再生ブロックなどは無視 */ }
   }
 
   // 1) 最初の「占い」生成 → アシスタントの最初のメッセージに
@@ -74,9 +79,10 @@ export default function Page() {
       return;
     }
     setLoading(true);
-    setMsgs([]); // 新規セッションとして開始
+    setMsgs([]); // 新規セッション
     setLuckyColor(null);
     setLuckyNumber(null);
+    setLearn(null);
 
     try {
       const r = await fetch("/api/horoscope", {
@@ -87,13 +93,21 @@ export default function Page() {
       const j = await r.json();
       if (j.error) throw new Error(j.error);
 
-      // Lucky情報（APIから取得）
+      // Lucky
       const color = (j.luckyColor || "blue") as string;
       const num = Number.isFinite(j.luckyNumber) ? Number(j.luckyNumber) : null;
       setLuckyColor(color);
       setLuckyNumber(num);
 
-      // Lucky情報を英文の最後に追記（テキストとしても残す）
+      // 学習カード
+      const learnData: Learn = {
+        points: Array.isArray(j.points) ? j.points : undefined,
+        usefulPhrases: Array.isArray(j.usefulPhrases) ? j.usefulPhrases : undefined,
+        practicePrompts: Array.isArray(j.practicePrompts) ? j.practicePrompts : undefined
+      };
+      setLearn(learnData);
+
+      // Lucky情報を本文の最後に追記して表示
       const extra = `\n\nLucky Color: ${color}  •  Lucky Number: ${num ?? ""}`.trim();
       const first: Msg = {
         id: crypto.randomUUID(),
@@ -119,7 +133,6 @@ export default function Page() {
       return;
     }
 
-    // 画面にユーザー発言を即時表示
     const userMsg: Msg = { id: crypto.randomUUID(), role: "user", en: text };
     setMsgs(prev => [...prev, userMsg]);
     setInput("");
@@ -167,7 +180,7 @@ export default function Page() {
   }
   function stopRec() { recRef.current?.stop(); }
 
-  // UI: シンプルなチャットバブル
+  // UI: シンプルなチャット＋学習カード
   return (
     <main style={styles.shell}>
       <header style={styles.header}>
@@ -198,7 +211,7 @@ export default function Page() {
         </button>
       </section>
 
-      {/* Lucky info badge（占い直後の視覚表示） */}
+      {/* Lucky info badge */}
       {luckyColor && luckyNumber !== null && (
         <div style={styles.luckyBox}>
           <div style={{ ...styles.colorDot, background: (luckyColor || "blue").toLowerCase() }} />
@@ -206,6 +219,40 @@ export default function Page() {
             <strong>Lucky Color:</strong> {luckyColor}　/　<strong>Lucky Number:</strong> {luckyNumber}
           </div>
         </div>
+      )}
+
+      {/* 学習用カード */}
+      {learn && (
+        <section style={styles.learnBox}>
+          {learn.points && learn.points.length > 0 && (
+            <div style={styles.section}>
+              <h4 style={styles.h4}>Key Points</h4>
+              <ul style={{ margin: "6px 0 0 18px" }}>
+                {learn.points.map((p, i) => <li key={i}>{p}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {learn.usefulPhrases && learn.usefulPhrases.length > 0 && (
+            <div style={styles.section}>
+              <h4 style={styles.h4}>Useful Phrases</h4>
+              <ul style={{ margin: "6px 0 0 18px" }}>
+                {learn.usefulPhrases.map((ph, i) => (
+                  <li key={i}><strong>{ph.en}</strong> — {ph.ja}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {learn.practicePrompts && learn.practicePrompts.length > 0 && (
+            <div style={styles.section}>
+              <h4 style={styles.h4}>Practice Prompts</h4>
+              <ol style={{ margin: "6px 0 0 18px" }}>
+                {learn.practicePrompts.map((q, i) => <li key={i}>{q}</li>)}
+              </ol>
+            </div>
+          )}
+        </section>
       )}
 
       {/* チャット欄 */}
@@ -258,8 +305,12 @@ const styles: Record<string, React.CSSProperties> = {
   input: { padding: 8, borderRadius: 8, border: "1px solid #ddd" },
   primaryBtn: { padding: "10px 14px", borderRadius: 10, border: "1px solid #ccc", background: "#111", color: "#fff", cursor: "pointer" },
 
-  luckyBox: { display: "flex", gap: 12, alignItems: "center", border: "1px solid #eee", padding: 10, borderRadius: 12, margin: "8px 0" },
+  luckyBox: { display: "flex", gap: 12, alignItems: "center", border: "1px solid #eee", padding: 10, borderRadius: 12, margin: "12px 0" },
   colorDot: { width: 20, height: 20, borderRadius: "50%", border: "1px solid #ccc" },
+
+  learnBox: { border: "1px solid #eee", borderRadius: 12, padding: 12, margin: "12px 0" },
+  section: { marginBottom: 12 },
+  h4: { margin: "0 0 6px 0", fontSize: 15 },
 
   chatWrap: { display: "grid", gap: 10, margin: "12px 0", maxHeight: "55vh", overflowY: "auto", padding: "0 4px" },
   bubble: { padding: 12, borderRadius: 14, maxWidth: "80%" },
