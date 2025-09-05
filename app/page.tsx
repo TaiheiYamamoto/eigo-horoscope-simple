@@ -9,10 +9,8 @@ type Msg = {
 };
 
 function splitEnJa(raw: string): { en: string; ja?: string } {
-  // 返答が「英語→日本語」の順に来る想定。うまく分割できなければ全文を英語扱い。
   const lines = raw.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length <= 1) return { en: raw, ja: undefined };
-  // 英語部分＝英字含む行～日本語っぽい行の境界で分割
   const boundary = lines.findIndex(l => /[ぁ-んァ-ン一-龠]/.test(l));
   if (boundary > 0) {
     return { en: lines.slice(0, boundary).join("\n"), ja: lines.slice(boundary).join("\n") };
@@ -21,21 +19,25 @@ function splitEnJa(raw: string): { en: string; ja?: string } {
 }
 
 export default function Page() {
-  // 初回質問フォーム
+  // --- 初回の質問 ---
   const [name, setName] = useState("");
   const [birth, setBirth] = useState(""); // YYYY-MM-DD
   const [topic, setTopic] = useState("love");
 
-  // チャットメッセージ
+  // --- チャットメッセージ ---
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // TTS / スクロール
+  // --- 最新の占い結果のLucky情報（バッジ表示用） ---
+  const [luckyColor, setLuckyColor] = useState<string | null>(null);
+  const [luckyNumber, setLuckyNumber] = useState<number | null>(null);
+
+  // --- TTS / スクロール ---
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  // 録音（STT）
+  // --- 録音（STT） ---
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const [recOn, setRecOn] = useState(false);
@@ -60,7 +62,9 @@ export default function Page() {
         audioRef.current.src = url;
         audioRef.current.play().catch(() => {});
       }
-    } catch {}
+    } catch {
+      // 再生失敗は無視（自動再生ブロックなど）
+    }
   }
 
   // 1) 最初の「占い」生成 → アシスタントの最初のメッセージに
@@ -71,6 +75,9 @@ export default function Page() {
     }
     setLoading(true);
     setMsgs([]); // 新規セッションとして開始
+    setLuckyColor(null);
+    setLuckyNumber(null);
+
     try {
       const r = await fetch("/api/horoscope", {
         method: "POST",
@@ -80,11 +87,19 @@ export default function Page() {
       const j = await r.json();
       if (j.error) throw new Error(j.error);
 
+      // Lucky情報（APIから取得）
+      const color = (j.luckyColor || "blue") as string;
+      const num = Number.isFinite(j.luckyNumber) ? Number(j.luckyNumber) : null;
+      setLuckyColor(color);
+      setLuckyNumber(num);
+
+      // Lucky情報を英文の最後に追記（テキストとしても残す）
+      const extra = `\n\nLucky Color: ${color}  •  Lucky Number: ${num ?? ""}`.trim();
       const first: Msg = {
         id: crypto.randomUUID(),
         role: "assistant",
-        en: j.english ?? "",
-        ja: j.japanese ?? undefined
+        en: ((j.english ?? "") + (extra ? extra : "")),
+        ja: (j.japanese ?? undefined)
       };
       setMsgs([first]);
       speak(first.en);
@@ -183,6 +198,16 @@ export default function Page() {
         </button>
       </section>
 
+      {/* Lucky info badge（占い直後の視覚表示） */}
+      {luckyColor && luckyNumber !== null && (
+        <div style={styles.luckyBox}>
+          <div style={{ ...styles.colorDot, background: (luckyColor || "blue").toLowerCase() }} />
+          <div style={{ fontSize: 14 }}>
+            <strong>Lucky Color:</strong> {luckyColor}　/　<strong>Lucky Number:</strong> {luckyNumber}
+          </div>
+        </div>
+      )}
+
       {/* チャット欄 */}
       <section style={styles.chatWrap}>
         {msgs.map(m => (
@@ -232,6 +257,9 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: 14, opacity: .8 },
   input: { padding: 8, borderRadius: 8, border: "1px solid #ddd" },
   primaryBtn: { padding: "10px 14px", borderRadius: 10, border: "1px solid #ccc", background: "#111", color: "#fff", cursor: "pointer" },
+
+  luckyBox: { display: "flex", gap: 12, alignItems: "center", border: "1px solid #eee", padding: 10, borderRadius: 12, margin: "8px 0" },
+  colorDot: { width: 20, height: 20, borderRadius: "50%", border: "1px solid #ccc" },
 
   chatWrap: { display: "grid", gap: 10, margin: "12px 0", maxHeight: "55vh", overflowY: "auto", padding: "0 4px" },
   bubble: { padding: 12, borderRadius: 14, maxWidth: "80%" },
